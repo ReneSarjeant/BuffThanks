@@ -1,7 +1,7 @@
--- Buff Thanks 1.3
+-- Buff Thanks 1.4
 -- Forever seals the aura caster even out of combat.
--- Identify them from the cast we saw, or from the combat-log chat line.
--- Friendly nameplates have to be on, or a stranger in the world is invisible.
+-- Identify them from a cast we already watched on a real unit.
+-- Classic chat events do not exist on this client. Do not register them.
 
 local ADDON = "BuffThanks"
 local COOLDOWN = 8
@@ -9,15 +9,6 @@ local CAST_WINDOW = 4
 
 local EMOTES = {
     "THANK", "WAVE", "BOW", "SALUTE", "CHEER", "APPLAUSE", "HELLO",
-}
-
-local CHAT_EVENTS = {
-    "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS",
-    "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS",
-    "CHAT_MSG_SPELL_SELF_BUFF",
-    "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF",
-    "CHAT_MSG_COMBAT_MISC_INFO",
-    "CHAT_MSG_SYSTEM",
 }
 
 local f = CreateFrame("Frame")
@@ -100,38 +91,6 @@ local function NoteCast(unit)
     C_Timer.After(0.4, function() pcall(Scan) end)
 end
 
-local function FindByName(name)
-    if not name or name == "" then return nil end
-    if UnitExists("target") and UnitName("target") == name then return "target" end
-    if UnitExists("mouseover") and UnitName("mouseover") == name then return "mouseover" end
-    if UnitExists("focus") and UnitName("focus") == name then return "focus" end
-    for i = 1, 4 do
-        local u = "party" .. i
-        if UnitExists(u) and UnitName(u) == name then return u end
-    end
-    for i = 1, 40 do
-        local u = "nameplate" .. i
-        if UnitExists(u) and UnitName(u) == name then return u end
-        u = "raid" .. i
-        if UnitExists(u) and UnitName(u) == name then return u end
-    end
-    return nil
-end
-
-local function NoteChat(msg)
-    if not msg or Sealed(msg) then return end
-    Debug("chat: " .. msg)
-    local name = msg:match("from ([^%.]+)$") or msg:match("by ([^%.]+)$")
-    if not name then return end
-    name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    local unit = FindByName(name)
-    if unit then
-        NoteCast(unit)
-    else
-        Debug("chat names " .. name .. " but they are not a unit")
-    end
-end
-
 local function ReadInstance(instanceID)
     if not instanceID or Sealed(instanceID) then return nil end
     if not C_UnitAuras or not C_UnitAuras.GetAuraDataByAuraInstanceID then return nil end
@@ -195,13 +154,13 @@ function Scan()
     end
     if not primed then
         primed = true
-        Debug("1.3 primed with " .. n .. " buffs")
+        Debug("1.4 primed with " .. n .. " buffs")
     end
 end
 
 local function Watch(unit)
     if unit and UnitExists(unit) then
-        f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unit)
+        pcall(f.RegisterUnitEvent, f, "UNIT_SPELLCAST_SUCCEEDED", unit)
     end
 end
 
@@ -218,13 +177,20 @@ local function WatchAll()
         Watch("nameplate" .. i)
     end
     if C_NamePlate and C_NamePlate.GetNamePlates then
-        local plates = C_NamePlate.GetNamePlates()
-        if plates and not Sealed(plates) then
+        local ok, plates = pcall(C_NamePlate.GetNamePlates)
+        if ok and plates and not Sealed(plates) then
             for _, plate in pairs(plates) do
-                if plate.namePlateUnitToken then Watch(plate.namePlateUnitToken) end
+                if type(plate) == "table" and plate.namePlateUnitToken then
+                    Watch(plate.namePlateUnitToken)
+                end
             end
         end
     end
+end
+
+local function SafeRegister(event)
+    local ok, err = pcall(f.RegisterEvent, f, event)
+    if not ok then Debug("skipped event " .. event .. ": " .. tostring(err)) end
 end
 
 f:SetScript("OnEvent", function(_, event, ...)
@@ -235,7 +201,7 @@ f:SetScript("OnEvent", function(_, event, ...)
         if BuffThanksDB.enabled == nil then BuffThanksDB.enabled = true end
         if BuffThanksDB.debug == nil then BuffThanksDB.debug = true end
         pcall(SetCVar, "nameplateShowFriends", 1)
-        print("|cff33ff99Buff Thanks 1.3|r loaded. Friendly nameplates on. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
+        print("|cff33ff99Buff Thanks 1.4|r loaded. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
         WatchAll()
         C_Timer.After(1, Scan)
     elseif event == "UNIT_AURA" then
@@ -247,13 +213,6 @@ f:SetScript("OnEvent", function(_, event, ...)
         NoteCast(...)
     elseif event == "NAME_PLATE_UNIT_ADDED" then
         Watch(...)
-    elseif event == "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS"
-        or event == "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS"
-        or event == "CHAT_MSG_SPELL_SELF_BUFF"
-        or event == "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF"
-        or event == "CHAT_MSG_COMBAT_MISC_INFO"
-        or event == "CHAT_MSG_SYSTEM" then
-        NoteChat(...)
     elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_TARGET_CHANGED" or event == "UPDATE_MOUSEOVER_UNIT" or event == "PLAYER_REGEN_ENABLED" then
         WatchAll()
         if event == "PLAYER_REGEN_ENABLED" then C_Timer.After(0.2, Scan) end
@@ -268,16 +227,15 @@ f:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
-f:RegisterEvent("ADDON_LOADED")
-f:RegisterEvent("PLAYER_ENTERING_WORLD")
-f:RegisterEvent("PLAYER_REGEN_ENABLED")
-f:RegisterEvent("GROUP_ROSTER_UPDATE")
-f:RegisterEvent("PLAYER_TARGET_CHANGED")
-f:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-f:RegisterEvent("NAME_PLATE_UNIT_ADDED")
-f:RegisterEvent("UNIT_AURA")
-f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-for i = 1, #CHAT_EVENTS do f:RegisterEvent(CHAT_EVENTS[i]) end
+SafeRegister("ADDON_LOADED")
+SafeRegister("PLAYER_ENTERING_WORLD")
+SafeRegister("PLAYER_REGEN_ENABLED")
+SafeRegister("GROUP_ROSTER_UPDATE")
+SafeRegister("PLAYER_TARGET_CHANGED")
+SafeRegister("UPDATE_MOUSEOVER_UNIT")
+SafeRegister("NAME_PLATE_UNIT_ADDED")
+SafeRegister("UNIT_AURA")
+SafeRegister("UNIT_SPELLCAST_SUCCEEDED")
 Watch("player")
 
 C_Timer.NewTicker(1, function()
@@ -292,14 +250,14 @@ SlashCmdList.BUFFTHANKS = function(msg)
     msg = (msg or ""):lower()
     if msg == "debug" then
         BuffThanksDB.debug = not BuffThanksDB.debug
-        print("|cff33ff99Buff Thanks 1.3|r debug " .. (BuffThanksDB.debug and "on" or "off"))
+        print("|cff33ff99Buff Thanks 1.4|r debug " .. (BuffThanksDB.debug and "on" or "off"))
         return
     end
     if msg == "test" then
         DoEmote("WAVE", "player")
-        print("|cff33ff99Buff Thanks 1.3|r test wave.")
+        print("|cff33ff99Buff Thanks 1.4|r test wave.")
         return
     end
     BuffThanksDB.enabled = not BuffThanksDB.enabled
-    print("|cff33ff99Buff Thanks 1.3|r " .. (BuffThanksDB.enabled and "on" or "off"))
+    print("|cff33ff99Buff Thanks 1.4|r " .. (BuffThanksDB.enabled and "on" or "off"))
 end
