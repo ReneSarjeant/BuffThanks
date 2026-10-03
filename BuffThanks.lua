@@ -1,7 +1,6 @@
--- Buff Thanks 1.4
--- Forever seals the aura caster even out of combat.
--- Identify them from a cast we already watched on a real unit.
--- Classic chat events do not exist on this client. Do not register them.
+-- Buff Thanks 1.5
+-- Do not pass a unit to DoEmote. Forever caster names are sealed garbage
+-- and Blizzard's chat gsub crashes on them (invalid pattern capture).
 
 local ADDON = "BuffThanks"
 local COOLDOWN = 8
@@ -32,6 +31,14 @@ local function Debug(msg)
     end
 end
 
+local function CleanName(unit)
+    if not unit or Sealed(unit) then return nil end
+    local name = UnitName(unit)
+    if not name or Sealed(name) or type(name) ~= "string" then return nil end
+    if name:find("[%c%%]") then return nil end
+    return name
+end
+
 local function Enabled()
     return not BuffThanksDB or BuffThanksDB.enabled ~= false
 end
@@ -39,25 +46,20 @@ end
 local function Thank(unit, why)
     if not Enabled() then return end
     if not unit or Sealed(unit) then return end
-    if unit ~= "player" and not UnitExists(unit) then
-        Debug("unit gone (" .. why .. ")")
-        return
-    end
+    if unit ~= "player" and not UnitExists(unit) then return end
     local now = GetTime()
     local key = (unit == "player") and "player" or UnitGUID(unit)
     if Sealed(key) or not key then key = unit end
     if lastThank[key] and (now - lastThank[key]) < COOLDOWN then
-        Debug("cooldown " .. tostring(key))
+        Debug("cooldown")
         return
     end
     lastThank[key] = now
     local emote = EMOTES[math.random(#EMOTES)]
-    if not pcall(DoEmote, emote, unit) then
-        pcall(DoEmote, emote)
-    end
-    local name = UnitName(unit)
-    if Sealed(name) then name = unit end
-    print("|cff33ff99Buff Thanks|r " .. emote .. " at " .. tostring(name) .. " (" .. why .. ")")
+    -- No target argument. A Forever name in that slot crashes ChatFrame gsub.
+    pcall(DoEmote, emote)
+    local name = CleanName(unit) or unit
+    print("|cff33ff99Buff Thanks|r " .. emote .. " for " .. tostring(name) .. " (" .. why .. ")")
 end
 
 local function IsPlayerUnit(unit)
@@ -154,7 +156,7 @@ function Scan()
     end
     if not primed then
         primed = true
-        Debug("1.4 primed with " .. n .. " buffs")
+        Debug("1.5 primed with " .. n .. " buffs")
     end
 end
 
@@ -189,8 +191,7 @@ local function WatchAll()
 end
 
 local function SafeRegister(event)
-    local ok, err = pcall(f.RegisterEvent, f, event)
-    if not ok then Debug("skipped event " .. event .. ": " .. tostring(err)) end
+    pcall(f.RegisterEvent, f, event)
 end
 
 f:SetScript("OnEvent", function(_, event, ...)
@@ -201,7 +202,7 @@ f:SetScript("OnEvent", function(_, event, ...)
         if BuffThanksDB.enabled == nil then BuffThanksDB.enabled = true end
         if BuffThanksDB.debug == nil then BuffThanksDB.debug = true end
         pcall(SetCVar, "nameplateShowFriends", 1)
-        print("|cff33ff99Buff Thanks 1.4|r loaded. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
+        print("|cff33ff99Buff Thanks 1.5|r loaded. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
         WatchAll()
         C_Timer.After(1, Scan)
     elseif event == "UNIT_AURA" then
@@ -250,14 +251,14 @@ SlashCmdList.BUFFTHANKS = function(msg)
     msg = (msg or ""):lower()
     if msg == "debug" then
         BuffThanksDB.debug = not BuffThanksDB.debug
-        print("|cff33ff99Buff Thanks 1.4|r debug " .. (BuffThanksDB.debug and "on" or "off"))
+        print("|cff33ff99Buff Thanks 1.5|r debug " .. (BuffThanksDB.debug and "on" or "off"))
         return
     end
     if msg == "test" then
-        DoEmote("WAVE", "player")
-        print("|cff33ff99Buff Thanks 1.4|r test wave.")
+        DoEmote("WAVE")
+        print("|cff33ff99Buff Thanks 1.5|r test wave.")
         return
     end
     BuffThanksDB.enabled = not BuffThanksDB.enabled
-    print("|cff33ff99Buff Thanks 1.4|r " .. (BuffThanksDB.enabled and "on" or "off"))
+    print("|cff33ff99Buff Thanks 1.5|r " .. (BuffThanksDB.enabled and "on" or "off"))
 end
