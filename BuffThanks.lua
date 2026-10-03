@@ -133,15 +133,7 @@ end)
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
-
-if type(RegisterUnitEvent) == "function" then
-    RegisterUnitEvent("UNIT_AURA", "player")
-    f:SetScript("OnEvent", f:GetScript("OnEvent"))
-    -- RegisterUnitEvent delivers to the frame only if the frame is also registered.
-    f:RegisterUnitEvent("UNIT_AURA", "player")
-else
-    f:RegisterEvent("UNIT_AURA")
-end
+f:RegisterEvent("UNIT_AURA")
 
 SLASH_BUFFTHANKS1 = "/bt"
 SLASH_BUFFTHANKS2 = "/buffthanks"
