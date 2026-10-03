@@ -1,14 +1,23 @@
--- Buff Thanks 1.2
--- Emote at whoever just buffed you, including yourself.
--- Forever seals sourceUnit even out of combat. A new aura id plus the
--- cast that just finished is how we identify the caster.
+-- Buff Thanks 1.3
+-- Forever seals the aura caster even out of combat.
+-- Identify them from the cast we saw, or from the combat-log chat line.
+-- Friendly nameplates have to be on, or a stranger in the world is invisible.
 
 local ADDON = "BuffThanks"
 local COOLDOWN = 8
-local CAST_WINDOW = 3
+local CAST_WINDOW = 4
 
 local EMOTES = {
     "THANK", "WAVE", "BOW", "SALUTE", "CHEER", "APPLAUSE", "HELLO",
+}
+
+local CHAT_EVENTS = {
+    "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS",
+    "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS",
+    "CHAT_MSG_SPELL_SELF_BUFF",
+    "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF",
+    "CHAT_MSG_COMBAT_MISC_INFO",
+    "CHAT_MSG_SYSTEM",
 }
 
 local f = CreateFrame("Frame")
@@ -38,15 +47,11 @@ end
 
 local function Thank(unit, why)
     if not Enabled() then return end
-    if not unit or Sealed(unit) then
-        Debug("no unit (" .. tostring(why) .. ")")
-        return
-    end
+    if not unit or Sealed(unit) then return end
     if unit ~= "player" and not UnitExists(unit) then
-        Debug("unit gone (" .. tostring(why) .. ")")
+        Debug("unit gone (" .. why .. ")")
         return
     end
-
     local now = GetTime()
     local key = (unit == "player") and "player" or UnitGUID(unit)
     if Sealed(key) or not key then key = unit end
@@ -55,12 +60,11 @@ local function Thank(unit, why)
         return
     end
     lastThank[key] = now
-
     local emote = EMOTES[math.random(#EMOTES)]
     if not pcall(DoEmote, emote, unit) then
         pcall(DoEmote, emote)
     end
-    local name = (unit == "player") and UnitName("player") or UnitName(unit)
+    local name = UnitName(unit)
     if Sealed(name) then name = unit end
     print("|cff33ff99Buff Thanks|r " .. emote .. " at " .. tostring(name) .. " (" .. why .. ")")
 end
@@ -82,7 +86,7 @@ local function RecentCaster()
             if not bestTime or when > bestTime then
                 best, bestTime = unit, when
             end
-        elseif (now - when) > 10 then
+        elseif (now - when) > 12 then
             recentCast[unit] = nil
         end
     end
@@ -93,7 +97,39 @@ local function NoteCast(unit)
     if not IsPlayerUnit(unit) then return end
     recentCast[unit] = GetTime()
     Debug("cast from " .. tostring(unit))
-    C_Timer.After(0.3, function() pcall(Scan) end)
+    C_Timer.After(0.4, function() pcall(Scan) end)
+end
+
+local function FindByName(name)
+    if not name or name == "" then return nil end
+    if UnitExists("target") and UnitName("target") == name then return "target" end
+    if UnitExists("mouseover") and UnitName("mouseover") == name then return "mouseover" end
+    if UnitExists("focus") and UnitName("focus") == name then return "focus" end
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) and UnitName(u) == name then return u end
+    end
+    for i = 1, 40 do
+        local u = "nameplate" .. i
+        if UnitExists(u) and UnitName(u) == name then return u end
+        u = "raid" .. i
+        if UnitExists(u) and UnitName(u) == name then return u end
+    end
+    return nil
+end
+
+local function NoteChat(msg)
+    if not msg or Sealed(msg) then return end
+    Debug("chat: " .. msg)
+    local name = msg:match("from ([^%.]+)$") or msg:match("by ([^%.]+)$")
+    if not name then return end
+    name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    local unit = FindByName(name)
+    if unit then
+        NoteCast(unit)
+    else
+        Debug("chat names " .. name .. " but they are not a unit")
+    end
 end
 
 local function ReadInstance(instanceID)
@@ -107,7 +143,7 @@ end
 local function Consider(id)
     local aura = ReadInstance(id)
     if aura and IsFalse(aura.isFromPlayerOrPlayerPet) then
-        Debug("skip " .. tostring(id) .. " not from a player")
+        Debug("skip " .. id .. " not from a player")
         return
     end
     local src = aura and aura.sourceUnit
@@ -124,17 +160,18 @@ local function Consider(id)
         Thank("target", "target")
         return
     end
-    Debug("new aura " .. tostring(id) .. " and no caster")
+    if IsPlayerUnit("mouseover") then
+        Thank("mouseover", "mouseover")
+        return
+    end
+    Debug("aura " .. id .. ", caster sealed, no watched player")
 end
 
 function Scan()
     if InCombatLockdown() then return end
     if not C_UnitAuras or not C_UnitAuras.GetUnitAuras then return end
     local ok, auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL", 40)
-    if not ok or not auras or Sealed(auras) then
-        Debug("aura list unreadable")
-        return
-    end
+    if not ok or not auras or Sealed(auras) then return end
     local seen = {}
     local n = 0
     for _, aura in pairs(auras) do
@@ -145,7 +182,7 @@ function Scan()
                 n = n + 1
                 if primed and not known[id] then
                     known[id] = true
-                    Debug("new aura " .. tostring(id))
+                    Debug("new aura " .. id)
                     Consider(id)
                 else
                     known[id] = true
@@ -158,25 +195,35 @@ function Scan()
     end
     if not primed then
         primed = true
-        Debug("primed with " .. n .. " buffs")
+        Debug("1.3 primed with " .. n .. " buffs")
     end
 end
 
 local function Watch(unit)
-    if unit then
+    if unit and UnitExists(unit) then
         f:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unit)
     end
 end
 
-local function WatchGroup()
+local function WatchAll()
     Watch("player")
     Watch("target")
     Watch("focus")
     Watch("mouseover")
+    Watch("softfriend")
+    Watch("softinteract")
     for i = 1, 4 do Watch("party" .. i) end
     for i = 1, 40 do
         Watch("raid" .. i)
         Watch("nameplate" .. i)
+    end
+    if C_NamePlate and C_NamePlate.GetNamePlates then
+        local plates = C_NamePlate.GetNamePlates()
+        if plates and not Sealed(plates) then
+            for _, plate in pairs(plates) do
+                if plate.namePlateUnitToken then Watch(plate.namePlateUnitToken) end
+            end
+        end
     end
 end
 
@@ -187,8 +234,9 @@ f:SetScript("OnEvent", function(_, event, ...)
         BuffThanksDB = BuffThanksDB or {}
         if BuffThanksDB.enabled == nil then BuffThanksDB.enabled = true end
         if BuffThanksDB.debug == nil then BuffThanksDB.debug = true end
-        print("|cff33ff99Buff Thanks|r 1.2 loaded. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
-        WatchGroup()
+        pcall(SetCVar, "nameplateShowFriends", 1)
+        print("|cff33ff99Buff Thanks 1.3|r loaded. Friendly nameplates on. /bt debug is " .. (BuffThanksDB.debug and "on" or "off"))
+        WatchAll()
         C_Timer.After(1, Scan)
     elseif event == "UNIT_AURA" then
         if ... == "player" then
@@ -199,15 +247,23 @@ f:SetScript("OnEvent", function(_, event, ...)
         NoteCast(...)
     elseif event == "NAME_PLATE_UNIT_ADDED" then
         Watch(...)
+    elseif event == "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS"
+        or event == "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS"
+        or event == "CHAT_MSG_SPELL_SELF_BUFF"
+        or event == "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF"
+        or event == "CHAT_MSG_COMBAT_MISC_INFO"
+        or event == "CHAT_MSG_SYSTEM" then
+        NoteChat(...)
     elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_TARGET_CHANGED" or event == "UPDATE_MOUSEOVER_UNIT" or event == "PLAYER_REGEN_ENABLED" then
-        WatchGroup()
+        WatchAll()
         if event == "PLAYER_REGEN_ENABLED" then C_Timer.After(0.2, Scan) end
     elseif event == "PLAYER_ENTERING_WORLD" then
         wipe(lastThank)
         wipe(recentCast)
         wipe(known)
         primed = false
-        WatchGroup()
+        pcall(SetCVar, "nameplateShowFriends", 1)
+        WatchAll()
         C_Timer.After(1, Scan)
     end
 end)
@@ -221,9 +277,11 @@ f:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
 f:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 f:RegisterEvent("UNIT_AURA")
 f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+for i = 1, #CHAT_EVENTS do f:RegisterEvent(CHAT_EVENTS[i]) end
 Watch("player")
 
 C_Timer.NewTicker(1, function()
+    WatchAll()
     if primed and not InCombatLockdown() then pcall(Scan) end
 end)
 
@@ -234,14 +292,14 @@ SlashCmdList.BUFFTHANKS = function(msg)
     msg = (msg or ""):lower()
     if msg == "debug" then
         BuffThanksDB.debug = not BuffThanksDB.debug
-        print("|cff33ff99Buff Thanks|r debug " .. (BuffThanksDB.debug and "on" or "off"))
+        print("|cff33ff99Buff Thanks 1.3|r debug " .. (BuffThanksDB.debug and "on" or "off"))
         return
     end
     if msg == "test" then
         DoEmote("WAVE", "player")
-        print("|cff33ff99Buff Thanks|r test wave.")
+        print("|cff33ff99Buff Thanks 1.3|r test wave.")
         return
     end
     BuffThanksDB.enabled = not BuffThanksDB.enabled
-    print("|cff33ff99Buff Thanks|r " .. (BuffThanksDB.enabled and "on" or "off"))
+    print("|cff33ff99Buff Thanks 1.3|r " .. (BuffThanksDB.enabled and "on" or "off"))
 end
