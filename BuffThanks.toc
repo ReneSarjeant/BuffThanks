@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Buff Thanks
+## Notes: Random emote when a friendly player buffs you. Built for the WoW Forever beta.
+## Author: Rene Sarjeant
+## Version: 1.0.0
+## SavedVariables: BuffThanksDB
+## IconTexture: Interface\Icons\Spell_Holy_MagicalSentry
+
+BuffThanks.lua
